@@ -1,0 +1,30 @@
+{
+  "name": "polyshield-runner",
+  "version": "0.1.0",
+  "description": "Polyshield local runner — launches your local stdio MCP servers and executes policy-approved tool calls from the Polyshield gateway. Outbound-only; your machine never accepts inbound connections.",
+  "type": "module",
+  "bin": {
+    "polyshield-runner": "./bin/polyshield-runner.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "start": "node bin/polyshield-runner.js start"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "security",
+    "polyshield"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  }
+}
