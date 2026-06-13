@@ -12,7 +12,16 @@ export class ControlPlaneError extends Error {
 
 export class ControlPlane {
   constructor(baseUrl, token, version) {
-    this.endpoint = new URL("/api/runner", baseUrl).toString();
+    const url = new URL("/api/runner", baseUrl);
+
+    // Security enhancement: Prevent unencrypted transmission of sensitive tokens
+    if (url.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
+      throw new ControlPlaneError(
+        "Security Error: Polyshield URLs must use HTTPS to prevent exposing pairing tokens and secrets over unencrypted connections."
+      );
+    }
+
+    this.endpoint = url.toString();
     this.token = token;
     this.version = version;
   }
