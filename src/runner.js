@@ -4,7 +4,7 @@
 // cloud simply sees the runner go offline.
 import { ControlPlane, ControlPlaneError } from "./api.js";
 import { ServerProcess, configFingerprint } from "./servers.js";
-import { dryRun, restore, scopeRootFor, snapshot } from "./sandbox.js";
+import { dryRun, remapPath, restore, scopeRootFor, snapshot } from "./sandbox.js";
 
 export const VERSION = "0.2.0";
 const SYNC_INTERVAL_MS = 15_000;
@@ -126,7 +126,14 @@ export async function runLoop(config) {
     try {
       const makeOverlayServer = (cwd) =>
         new ServerProcess(
-          { ...proc.config, cwd, sandbox: { ...(proc.config.sandbox ?? {}), fsScope: [cwd] } },
+          {
+            ...proc.config,
+            cwd,
+            // Point the server's own allow-dir args (e.g. the filesystem
+            // server's root) at the overlay too, so it writes into the copy.
+            args: (proc.config.args ?? []).map((a) => remapPath(a, proc.scopeRoot, cwd)),
+            sandbox: { ...(proc.config.sandbox ?? {}), fsScope: [cwd] },
+          },
           (m) => log(`${proc.config.prefix} (dry-run): ${m}`),
         );
       const preview = await dryRun(makeOverlayServer, job.rawName, job.args ?? {}, proc.scopeRoot);

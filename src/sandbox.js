@@ -79,12 +79,57 @@ export function assertPathArgsInScope(args, root) {
       );
     }
   };
-  for (const [k, v] of Object.entries(args ?? {})) {
-    if (typeof v === "string") check(k, v);
-    else if (v && typeof v === "object" && !Array.isArray(v)) {
-      for (const [k2, v2] of Object.entries(v)) if (typeof v2 === "string") check(k2, v2);
+  // Walk the WHOLE argument tree — strings, arrays, and nested objects — so a
+  // path hidden in an array (e.g. read_multiple_files paths:[...]) or one level
+  // deeper can't slip past. Array items inherit their container key, so a
+  // pathish key like "paths"/"files" is still honored. Depth-bounded.
+  const walk = (key, value, depth) => {
+    if (depth > 8) return;
+    if (typeof value === "string") check(key, value);
+    else if (Array.isArray(value)) for (const item of value) walk(key, item, depth + 1);
+    else if (value && typeof value === "object") {
+      for (const [k, v] of Object.entries(value)) walk(k, v, depth + 1);
     }
-  }
+  };
+  walk("", args ?? {}, 0);
+}
+
+/** Map a path that lives under `fromRoot` to the equivalent path under `toRoot`. */
+export function remapPath(value, fromRoot, toRoot) {
+  if (typeof value !== "string" || !value) return value;
+  const expanded = expandHome(value);
+  const from = resolve(fromRoot);
+  // Only remap GENUINE filesystem paths — an absolute path, an explicit
+  // ./ ../ ~/ path, or one already under the scope. Bare flags ("-y") and
+  // package names ("@scope/pkg") must pass through untouched, or we'd mangle
+  // the server's own launch args into nonexistent overlay paths.
+  const pathish = isAbsolute(expanded) || /^[.~][/\\]/.test(expanded) || expanded.startsWith(from);
+  if (!pathish) return value;
+  const resolved = resolve(from, expanded);
+  if (resolved === from) return toRoot;
+  if (resolved.startsWith(from + sep)) return join(toRoot, relative(from, resolved));
+  return value; // outside scope — leave it; the scope check will refuse it
+}
+
+/**
+ * Deep-remap path-like string args from `fromRoot` to `toRoot`. Used for the
+ * dry-run: the agent's absolute paths point at the real scope, so we rewrite
+ * them onto the copy-on-write overlay before executing, so the dry-run writes
+ * land in the throwaway copy (and the diff is real) instead of the live files.
+ */
+export function remapArgs(args, fromRoot, toRoot) {
+  const walk = (key, value, depth) => {
+    if (depth > 8) return value;
+    if (typeof value === "string") return looksLikePath(key, value) ? remapPath(value, fromRoot, toRoot) : value;
+    if (Array.isArray(value)) return value.map((v) => walk(key, v, depth + 1));
+    if (value && typeof value === "object") {
+      const out = {};
+      for (const [k, v] of Object.entries(value)) out[k] = walk(k, v, depth + 1);
+      return out;
+    }
+    return value;
+  };
+  return walk("", args ?? {}, 0);
 }
 
 // Vars a child needs just to launch (find its interpreter, temp, home). These
@@ -321,7 +366,7 @@ export async function dryRun(makeOverlayServer, rawName, args, root) {
     if (!(await server.ensureStarted())) {
       return { files: [], note: "Could not start the server for a dry-run." };
     }
-    const result = await server.callTool(rawName, args);
+    const result = await server.callTool(rawName, remapArgs(args, root, overlay));
     toolErrored = result?.isError === true;
   } catch (err) {
     return { files: [], note: `Dry-run could not execute: ${err?.message ?? err}` };
