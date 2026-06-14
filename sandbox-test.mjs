@@ -60,6 +60,19 @@ check("parent-escape path refused", allow("../evil.txt") === false);
 check("absolute-outside path refused", allow("C:\\Windows\\System32\\x.txt") === false || allow("/etc/passwd") === false);
 check("deep traversal refused", allow("sub/../../escape.txt") === false);
 
+const allowStruct = (args) => {
+  try {
+    assertPathArgsInScope(args, scope);
+    return true;
+  } catch {
+    return false;
+  }
+};
+check("deeply nested escape path refused", allowStruct({ options: { nested: { file: "../evil.txt" } } }) === false);
+check("array escape path refused", allowStruct({ files: ["../evil.txt"] }) === false);
+check("array of objects escape path refused", allowStruct({ args: [{ file: "../evil.txt" }] }) === false);
+check("array in-scope path allowed", allowStruct({ files: ["a.txt"] }) === true);
+
 // ---- dry-run diff shape ----
 const overlay = mkdtempSync(join(tmpdir(), "ps-overlay-"));
 writeFileSync(join(overlay, "a.txt"), "original-a\nplus a line\n"); // modified
