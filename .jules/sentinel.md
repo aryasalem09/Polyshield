@@ -1,0 +1,4 @@
+## 2024-05-18 - [Path Traversal bypass in sandbox argument validation]
+**Vulnerability:** The sandbox argument path validation (`assertPathArgsInScope`) only checked for dangerous paths escaping the sandbox at the first two object nesting levels and completely missed arrays. A nested payload like `{ options: { nested: { file: "../../../etc/passwd" } } }` or `{ files: ["../../../etc/passwd"] }` would bypass the check and allow a directory traversal / sandbox escape attack.
+**Learning:** Argument structures from clients (like LLMs or automated tools) can be arbitrarily nested and use various data types (arrays, objects). Shallow validation functions are insufficient for deep JSON-like structures.
+**Prevention:** Use recursive validation functions that traverse all nested properties and array elements of untrusted input to enforce security invariants at arbitrary depth.

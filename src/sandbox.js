@@ -79,12 +79,16 @@ export function assertPathArgsInScope(args, root) {
       );
     }
   };
-  for (const [k, v] of Object.entries(args ?? {})) {
-    if (typeof v === "string") check(k, v);
-    else if (v && typeof v === "object" && !Array.isArray(v)) {
-      for (const [k2, v2] of Object.entries(v)) if (typeof v2 === "string") check(k2, v2);
+
+  const walk = (obj) => {
+    if (!obj || typeof obj !== "object") return;
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === "string") check(k, v);
+      else if (v && typeof v === "object") walk(v);
     }
-  }
+  };
+
+  walk(args);
 }
 
 // Vars a child needs just to launch (find its interpreter, temp, home). These
