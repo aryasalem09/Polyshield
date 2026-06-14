@@ -1,0 +1,7 @@
+## 2025-02-27 - [Enforce TLS for Agent Runner Tokens]
+**Vulnerability:** The local polyshield-runner transmits a highly sensitive pairing token (`prt_live_...`) to the control plane. Previously, there was no enforcement that the control plane URL used HTTPS (except by convention). Additionally, `fetch` redirects were allowed, which could lead to token leakage if an HTTP endpoint redirects with a token to a third-party server. Furthermore, the directory containing the config file with the pairing token could be created with default (potentially permissive) permissions on multi-user systems.
+**Learning:** Agent tools and runners that rely on single-bearer tokens must strictly enforce secure transmission protocols at the code level, rather than relying on the user to provide an `https://` URL. Redirects must be forbidden or handled manually to avoid leaking `Authorization` headers to unknown domains. Config directories containing credentials must explicitly set restrictive file system permissions (`0o700` for directories, `0o600` for files).
+**Prevention:**
+1. Validate `url.protocol === "https:"` (allowing `localhost`/`127.0.0.1` for dev) before sending requests.
+2. Set `redirect: "error"` or `redirect: "manual"` in `fetch()` options when sending sensitive `Authorization` headers.
+3. Explicitly pass `{ mode: 0o700 }` to `fs.mkdirSync` when creating configuration directories for credentials.

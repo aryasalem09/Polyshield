@@ -12,7 +12,11 @@ export class ControlPlaneError extends Error {
 
 export class ControlPlane {
   constructor(baseUrl, token, version) {
-    this.endpoint = new URL("/api/runner", baseUrl).toString();
+    const url = new URL("/api/runner", baseUrl);
+    if (url.protocol !== "https:" && url.hostname !== "localhost" && url.hostname !== "127.0.0.1") {
+      throw new ControlPlaneError(`Refusing to send pairing token over unencrypted connection to ${url.origin}`);
+    }
+    this.endpoint = url.toString();
     this.token = token;
     this.version = version;
   }
@@ -28,6 +32,7 @@ export class ControlPlane {
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(30_000),
+        redirect: "error", // Prevent token leakage via redirects
       });
     } catch (err) {
       throw new ControlPlaneError(
