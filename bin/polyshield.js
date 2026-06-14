@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Polyshield local runner CLI.
-//   polyshield-runner pair --token prt_live_... --url https://your-polyshield.app
-//   polyshield-runner start
-//   polyshield-runner status
+//   polyshield pair --token prt_live_... --url https://your-polyshield.app
+//   polyshield start
+//   polyshield status
 import { configPath, loadConfig, saveConfig } from "../src/config.js";
 import { checkOnce, runLoop, VERSION } from "../src/runner.js";
 
@@ -17,16 +17,17 @@ function parseFlags(argv) {
 }
 
 function help() {
-  console.log(`polyshield-runner v${VERSION}
+  console.log(`polyshield v${VERSION}
 
 The Polyshield local runner launches your local stdio MCP servers and
 executes policy-approved tool calls from your Polyshield gateway. It only
-dials out — nothing connects to your machine.
+dials out — nothing connects to your machine — and runs each server inside a
+sandbox (filesystem scope, stripped environment, snapshots for undo).
 
 Usage:
-  polyshield-runner pair --token <prt_live_...> --url <https://your-polyshield-app>
-  polyshield-runner start
-  polyshield-runner status
+  polyshield pair --token <prt_live_...> --url <https://your-polyshield-app>
+  polyshield start
+  polyshield status
 
 Pair tokens are created in the Polyshield dashboard (Servers → Pair local
 runner). Config is stored at ${configPath()}.
@@ -37,7 +38,7 @@ function requireConfig() {
   const config = loadConfig();
   if (!config.url || !config.token) {
     console.error(
-      "Not paired yet. Run:\n  polyshield-runner pair --token <prt_live_...> --url <https://your-polyshield-app>",
+      "Not paired yet. Run:\n  polyshield pair --token <prt_live_...> --url <https://your-polyshield-app>",
     );
     process.exit(1);
   }
@@ -65,7 +66,7 @@ switch (command) {
       saveConfig(config);
       console.log(`Paired ✔  (${servers.length} stdio server(s) registered for this project)`);
       console.log(`Config saved to ${configPath()}`);
-      console.log("Start the runner with:  polyshield-runner start");
+      console.log("Start the runner with:  polyshield start");
     } catch (err) {
       console.error(`Pairing failed: ${err?.message ?? err}`);
       process.exit(1);
@@ -93,7 +94,8 @@ switch (command) {
         console.log("No stdio servers registered. Add one in the Polyshield dashboard.");
       }
       for (const s of servers) {
-        console.log(`  ${s.prefix}  ${s.name}  →  ${s.command} ${(s.args ?? []).join(" ")}`);
+        const scope = s.sandbox?.fsScope?.length ? `  [scope: ${s.sandbox.fsScope.join(", ")}]` : "";
+        console.log(`  ${s.prefix}  ${s.name}  →  ${s.command} ${(s.args ?? []).join(" ")}${scope}`);
       }
     } catch (err) {
       console.error(`Status check failed: ${err?.message ?? err}`);

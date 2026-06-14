@@ -61,13 +61,33 @@ export class ControlPlane {
     });
   }
 
-  /** Claim up to `max` pending tool-call jobs. */
+  /** Claim up to `max` pending jobs (call | dryrun | restore). */
   async claim(max = 5) {
     return this.#post({ op: "claim", max });
   }
 
-  /** Deliver a job result (or error). */
-  async complete(jobId, result, error) {
-    return this.#post({ op: "complete", jobId, result, error });
+  /** Deliver a job result (or error). `kind` lets the server store dry-run
+   *  previews as-is instead of coercing them to a tool-result shape. */
+  async complete(jobId, result, error, kind = "call") {
+    return this.#post({ op: "complete", jobId, result, error, kind });
+  }
+
+  /** Register a snapshot taken before a destructive call (undo point). */
+  async reportSnapshot({ serverId, jobId, label, scopePath, ref, snapshotKind, bytes }) {
+    return this.#post({
+      op: "snapshot",
+      serverId,
+      jobId,
+      label,
+      scopePath,
+      ref,
+      snapshotKind,
+      bytes,
+    });
+  }
+
+  /** Report the outcome of a restore job back onto the snapshot row. */
+  async markSnapshotRestored(snapshotId, ok) {
+    return this.#post({ op: "snapshot_restored", snapshotId, ok });
   }
 }
