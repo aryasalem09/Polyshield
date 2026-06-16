@@ -1,8 +1,10 @@
 // Deterministic unit test for the sandbox primitives (snapshot/restore,
 // path-scope enforcement, dry-run diff). Run: node sandbox-test.mjs
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, symlinkSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { ControlPlane } from "./src/api.js";
+import { serverTrustFingerprint, serverTrustState } from "./src/config.js";
 import {
   assertPathArgsInScope,
   snapshot,
@@ -24,12 +26,14 @@ const check = (name, cond, extra = "") => {
 
 // ---- snapshot + restore (undo) ----
 const scope = mkdtempSync(join(tmpdir(), "ps-scope-"));
+const otherScope = mkdtempSync(join(tmpdir(), "ps-other-"));
 writeFileSync(join(scope, "a.txt"), "original-a\n");
 writeFileSync(join(scope, "keep.txt"), "keep\n");
 mkdirSync(join(scope, "sub"));
 writeFileSync(join(scope, "sub", "c.txt"), "original-c\n");
+writeFileSync(join(otherScope, "other.txt"), "do-not-touch\n");
 
-const snap = snapshot(scope);
+const snap = snapshot(scope, { serverId: "server-a" });
 check("snapshot returns a ref + bytes", !!snap.ref && snap.bytes > 0, JSON.stringify(snap));
 
 // Mutate: modify a.txt, add b.txt, delete keep.txt, modify nested.
@@ -44,6 +48,22 @@ check("restore reverts a modification", readFileSync(join(scope, "a.txt"), "utf8
 check("restore removes an added file", !existsSync(join(scope, "b.txt")));
 check("restore recreates a deleted file", existsSync(join(scope, "keep.txt")));
 check("restore reverts a nested file", readFileSync(join(scope, "sub", "c.txt"), "utf8") === "original-c\n");
+check("restore refuses a different target root", (() => {
+  try {
+    restore(snap.ref, otherScope, { serverId: "server-a" });
+    return false;
+  } catch {
+    return readFileSync(join(otherScope, "other.txt"), "utf8") === "do-not-touch\n";
+  }
+})());
+check("restore refuses a different server id", (() => {
+  try {
+    restore(snap.ref, scope, { serverId: "server-b" });
+    return false;
+  } catch {
+    return true;
+  }
+})());
 
 // ---- path-scope enforcement ----
 const allow = (p) => {
@@ -59,6 +79,88 @@ check("nested in-scope path allowed", allow("sub/c.txt") === true);
 check("parent-escape path refused", allow("../evil.txt") === false);
 check("absolute-outside path refused", allow("C:\\Windows\\System32\\x.txt") === false || allow("/etc/passwd") === false);
 check("deep traversal refused", allow("sub/../../escape.txt") === false);
+check("nested path arrays refused", (() => {
+  try {
+    assertPathArgsInScope({ paths: ["a.txt", "../escape.txt"] }, scope);
+    return false;
+  } catch {
+    return true;
+  }
+})());
+check("host shell command args refused", (() => {
+  try {
+    assertPathArgsInScope({ command: "type C:\\Windows\\win.ini" }, scope);
+    return false;
+  } catch {
+    return true;
+  }
+})());
+check("symlink directory escape refused when supported", (() => {
+  const outside = mkdtempSync(join(tmpdir(), "ps-outside-"));
+  writeFileSync(join(outside, "secret.txt"), "secret\n");
+  try {
+    symlinkSync(outside, join(scope, "outside-link"), "junction");
+    assertPathArgsInScope({ path: "outside-link/secret.txt" }, scope);
+    return false;
+  } catch (err) {
+    if (!existsSync(join(scope, "outside-link"))) return true; // symlink creation unsupported here
+    return true;
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+    rmSync(join(scope, "outside-link"), { recursive: true, force: true });
+  }
+})());
+
+// ---- control-plane URL safety ----
+check("https control-plane accepted", (() => {
+  try {
+    new ControlPlane("https://polyshield.example", "prt_live_test", "test");
+    return true;
+  } catch {
+    return false;
+  }
+})());
+check("non-loopback http control-plane refused", (() => {
+  try {
+    new ControlPlane("http://example.com", "prt_live_test", "test");
+    return false;
+  } catch {
+    return true;
+  }
+})());
+check("loopback http requires explicit local-dev opt-in", (() => {
+  try {
+    new ControlPlane("http://127.0.0.1:3000", "prt_live_test", "test");
+    return false;
+  } catch {
+    return true;
+  }
+})());
+check("loopback http accepted with explicit local-dev opt-in", (() => {
+  try {
+    new ControlPlane("http://127.0.0.1:3000", "prt_live_test", "test", { insecureLocalDev: true });
+    return true;
+  } catch {
+    return false;
+  }
+})());
+
+// ---- local trust fingerprints ----
+const serverCfg = {
+  id: "server-1",
+  prefix: "fs",
+  name: "Filesystem",
+  command: "npx",
+  args: ["@modelcontextprotocol/server-filesystem", scope],
+  cwd: scope,
+  envPassthrough: [],
+  sandbox: { fsScope: [scope], egress: { mode: "none", allow: [] } },
+};
+const trusted = {
+  "server-1": { fingerprint: serverTrustFingerprint(serverCfg) },
+};
+check("trusted server config accepted", serverTrustState(serverCfg, trusted).trusted === true);
+check("changed server config rejected", serverTrustState({ ...serverCfg, args: ["malicious"] }, trusted).trusted === false);
 
 // ---- dry-run diff shape ----
 const overlay = mkdtempSync(join(tmpdir(), "ps-overlay-"));
@@ -77,12 +179,14 @@ check("modified file has a unified diff", typeof aFile?.diff === "string" && aFi
 
 // cleanup
 rmSync(scope, { recursive: true, force: true });
+rmSync(otherScope, { recursive: true, force: true });
 rmSync(overlay, { recursive: true, force: true });
 try {
-  rmSync(join(process.env.USERPROFILE || process.env.HOME, ".polyshield", "snapshots", snap.ref), {
+  rmSync(join(homedir(), ".polyshield", "snapshots", snap.ref), {
     recursive: true,
     force: true,
   });
+  rmSync(join(homedir(), ".polyshield", "snapshot-meta", `${snap.ref}.json`), { force: true });
 } catch {
   /* ignore */
 }

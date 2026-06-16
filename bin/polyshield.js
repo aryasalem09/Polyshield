@@ -3,7 +3,7 @@
 //   polyshield pair --token prt_live_... --url https://your-polyshield.app
 //   polyshield start
 //   polyshield status
-import { configPath, loadConfig, saveConfig } from "../src/config.js";
+import { configPath, loadConfig, saveConfig, trustServerConfig } from "../src/config.js";
 import { checkOnce, runLoop, VERSION } from "../src/runner.js";
 
 function parseFlags(argv) {
@@ -26,12 +26,15 @@ sandbox (filesystem scope, stripped environment, snapshots for undo).
 
 Usage:
   polyshield pair --token <prt_live_...> --url <https://your-polyshield-app>
+  polyshield trust
   polyshield start
   polyshield status
 
 Pair tokens are created in the Polyshield dashboard (Servers → Pair local
 runner). Config is stored at ${configPath()}.
-Env overrides: POLYSHIELD_URL, POLYSHIELD_RUNNER_TOKEN.`);
+Env overrides: POLYSHIELD_URL, POLYSHIELD_RUNNER_TOKEN.
+For loopback-only local testing, add --insecure-local-dev or set
+POLYSHIELD_INSECURE_LOCAL_DEV=1.`);
 }
 
 function requireConfig() {
@@ -60,7 +63,7 @@ switch (command) {
       console.error("That doesn't look like a runner token (expected prt_live_...).");
       process.exit(1);
     }
-    const config = { url, token, name: flags.name };
+    const config = { url, token, name: flags.name, insecureLocalDev: flags["insecure-local-dev"] === "true" };
     try {
       const servers = await checkOnce(config);
       saveConfig(config);
@@ -69,6 +72,28 @@ switch (command) {
       console.log("Start the runner with:  polyshield start");
     } catch (err) {
       console.error(`Pairing failed: ${err?.message ?? err}`);
+      process.exit(1);
+    }
+    break;
+  }
+
+  case "trust": {
+    const config = requireConfig();
+    try {
+      const servers = await checkOnce(config);
+      if (servers.length === 0) {
+        console.log("No stdio servers registered to trust.");
+        break;
+      }
+      for (const s of servers) {
+        trustServerConfig(s);
+        console.log(
+          `Trusted ${s.prefix} (${s.name}) → ${s.command} with ${(s.args ?? []).length} configured arg(s).`,
+        );
+      }
+      console.log("Start or restart the runner for trusted configs to take effect.");
+    } catch (err) {
+      console.error(`Trust failed: ${err?.message ?? err}`);
       process.exit(1);
     }
     break;
@@ -94,8 +119,8 @@ switch (command) {
         console.log("No stdio servers registered. Add one in the Polyshield dashboard.");
       }
       for (const s of servers) {
-        const scope = s.sandbox?.fsScope?.length ? `  [scope: ${s.sandbox.fsScope.join(", ")}]` : "";
-        console.log(`  ${s.prefix}  ${s.name}  →  ${s.command} ${(s.args ?? []).join(" ")}${scope}`);
+        const scope = s.sandbox?.fsScope?.length ? `  [${s.sandbox.fsScope.length} scope(s)]` : "";
+        console.log(`  ${s.prefix}  ${s.name}  →  ${s.command} (${(s.args ?? []).length} arg(s))${scope}`);
       }
     } catch (err) {
       console.error(`Status check failed: ${err?.message ?? err}`);

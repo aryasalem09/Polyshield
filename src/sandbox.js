@@ -12,17 +12,21 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { diffTrees } from "./diff.js";
 
 const DATA_DIR = join(homedir(), ".polyshield");
 const SNAP_DIR = join(DATA_DIR, "snapshots");
+const SNAP_META_DIR = join(DATA_DIR, "snapshot-meta");
 const OVERLAY_DIR = join(DATA_DIR, "overlays");
 
 const IGNORE = new Set([
@@ -52,6 +56,7 @@ export function scopeEnforced(config) {
 
 const PATHISH_KEY =
   /(^|_|-)(path|file|filepath|dir|directory|cwd|target|dest|destination|src|source|location|output|input)s?$/i;
+const SHELLISH_KEY = /(^|_|-)(command|cmd|script|shell|exec|executable|program)$/i;
 
 function looksLikePath(key, value) {
   if (typeof value !== "string" || !value) return false;
@@ -65,15 +70,21 @@ function looksLikePath(key, value) {
 /**
  * Refuse a call whose path-like arguments escape the scope root. Heuristic on
  * which args are paths (we don't know the tool's schema), tuned to catch the
- * dangerous cases without flagging arbitrary strings. Lexical containment only
- * — symlink escapes are a known gap closed by container-level scoping later.
+ * dangerous cases without flagging arbitrary strings. Existing paths and their
+ * closest existing parent are realpath-checked so symlink escapes fail closed.
  */
-export function assertPathArgsInScope(args, root) {
+export function assertPathArgsInScope(args, root, options = {}) {
   const base = resolve(root);
+  const baseReal = safeRealpath(base);
   const check = (key, value) => {
+    if (!options.allowShellCommandArgs && SHELLISH_KEY.test(key) && typeof value === "string") {
+      throw new Error(
+        `Polyshield sandbox: shell-like argument "${key}" requires a containerized sandbox.`,
+      );
+    }
     if (!looksLikePath(key, value)) return;
-    const resolved = resolve(base, value);
-    if (resolved !== base && !resolved.startsWith(base + sep)) {
+    const resolved = resolve(base, expandHome(value));
+    if (!inside(base, resolved) || !inside(baseReal, realpathAnchor(resolved))) {
       throw new Error(
         `Polyshield sandbox: argument "${key}" points outside the allowed scope (${base}).`,
       );
@@ -92,6 +103,29 @@ export function assertPathArgsInScope(args, root) {
     }
   };
   walk("", args ?? {}, 0);
+}
+
+function inside(base, target) {
+  const rel = relative(base, target);
+  return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function safeRealpath(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+function realpathAnchor(path) {
+  let cur = resolve(path);
+  while (!existsSync(cur)) {
+    const parent = dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+  }
+  return safeRealpath(cur);
 }
 
 /** Map a path that lives under `fromRoot` to the equivalent path under `toRoot`. */
@@ -306,15 +340,30 @@ function pruneSnapshots() {
   }
 }
 
-export function snapshot(root) {
+export function snapshot(root, options = {}) {
   const { bytes, over } = measure(root);
   if (over) {
     throw new Error("scope too large to snapshot safely (over 200MB or 20k files)");
   }
   mkdirSync(SNAP_DIR, { recursive: true });
+  mkdirSync(SNAP_META_DIR, { recursive: true });
   const ref = `${Date.now()}-${randomUUID().slice(0, 8)}`;
   const dest = join(SNAP_DIR, ref);
   cpSync(root, dest, { recursive: true, filter: cpFilter(root) });
+  writeFileSync(
+    join(SNAP_META_DIR, `${ref}.json`),
+    JSON.stringify(
+      {
+        ref,
+        serverId: options.serverId ?? null,
+        scopePath: safeRealpath(root),
+        createdAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    ) + "\n",
+    { mode: 0o600 },
+  );
   pruneSnapshots();
   return { ref, bytes, scopePath: root };
 }
@@ -324,7 +373,7 @@ export function snapshot(root) {
  * captured set), then copy the snapshot back over. Reverts modifications and
  * additions and recreates deletions, within the non-ignored fileset.
  */
-export function restore(ref, root) {
+export function restore(ref, root, options = {}) {
   // Defense in depth: ref is a runner-generated id, but never let one with
   // path separators traverse out of the snapshots dir.
   if (typeof ref !== "string" || !ref || /[\\/]|\.\./.test(ref)) {
@@ -332,6 +381,14 @@ export function restore(ref, root) {
   }
   const snap = join(SNAP_DIR, ref);
   if (!existsSync(snap)) throw new Error("snapshot no longer exists on this machine");
+  const meta = readSnapshotMeta(ref);
+  if (options.serverId && meta.serverId && meta.serverId !== options.serverId) {
+    throw new Error("snapshot server mismatch; refusing unsafe restore");
+  }
+  const requestedRoot = safeRealpath(root);
+  if (meta.scopePath !== requestedRoot) {
+    throw new Error("snapshot scope mismatch; refusing to restore into a different directory");
+  }
   const snapFiles = relPaths(snap);
   for (const rel of relPaths(root)) {
     if (!snapFiles.has(rel)) {
@@ -343,6 +400,19 @@ export function restore(ref, root) {
     }
   }
   cpSync(snap, root, { recursive: true, force: true, filter: cpFilter(snap) });
+}
+
+function readSnapshotMeta(ref) {
+  try {
+    const meta = JSON.parse(readFileSync(join(SNAP_META_DIR, `${ref}.json`), "utf8"));
+    if (meta?.ref !== ref || typeof meta.scopePath !== "string") {
+      throw new Error("invalid snapshot metadata");
+    }
+    return meta;
+  } catch (err) {
+    if (err instanceof Error && err.message === "invalid snapshot metadata") throw err;
+    throw new Error("snapshot metadata missing; refusing unsafe restore");
+  }
 }
 
 /**

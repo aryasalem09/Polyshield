@@ -33,6 +33,7 @@ export class ServerProcess {
     this.log = log;
     this.client = null;
     this.startError = null;
+    this.containerized = false;
     // The scope root is also the child's working directory, so a tool's
     // relative paths resolve inside the sandbox by construction.
     this.scopeRoot = scopeRootFor(config);
@@ -66,7 +67,7 @@ export class ServerProcess {
       this.client = client;
       this.startError = null;
       this.log(
-        `started${this.containerized ? " (containerized)" : ""}: ${this.config.command} ${(this.config.args ?? []).join(" ")}`.trim(),
+        `started${this.containerized ? " (containerized)" : ""}: ${this.config.command} (${(this.config.args ?? []).length} arg(s))`.trim(),
       );
     } catch (err) {
       this.client = null;
@@ -107,12 +108,16 @@ export class ServerProcess {
   }
 
   async callTool(name, args) {
-    // Filesystem scope: refuse path args that escape the scope BEFORE the
-    // child runs, so a scoped server can't be steered outside its root.
-    if (this.enforceScope) assertPathArgsInScope(args, this.scopeRoot);
-
     if (!(await this.ensureStarted())) {
       throw new Error(this.startError ?? "server not running");
+    }
+    // Filesystem scope: refuse escaping path args before the tool call reaches
+    // the child. Host-mode shell command args are unconfined, so they fail
+    // closed unless Docker containerization actually took effect.
+    if (this.enforceScope) {
+      assertPathArgsInScope(args, this.scopeRoot, {
+        allowShellCommandArgs: this.containerized === true,
+      });
     }
     const timeout = wallLimitMs(this.config);
     let result;

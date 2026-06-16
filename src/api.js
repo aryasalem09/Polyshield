@@ -11,8 +11,17 @@ export class ControlPlaneError extends Error {
 }
 
 export class ControlPlane {
-  constructor(baseUrl, token, version) {
-    this.endpoint = new URL("/api/runner", baseUrl).toString();
+  constructor(baseUrl, token, version, options = {}) {
+    const parsed = new URL(baseUrl);
+    if (parsed.protocol !== "https:") {
+      const loopback = ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
+      if (parsed.protocol !== "http:" || !loopback || options.insecureLocalDev !== true) {
+        throw new ControlPlaneError(
+          "Refusing to send the runner token to a non-HTTPS control plane. Use HTTPS, or --insecure-local-dev for loopback-only local testing.",
+        );
+      }
+    }
+    this.endpoint = new URL("/api/runner", parsed).toString();
     this.token = token;
     this.version = version;
   }

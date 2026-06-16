@@ -3,6 +3,7 @@
 // claimed jobs. Everything is outbound polling — kill the process and the
 // cloud simply sees the runner go offline.
 import { ControlPlane, ControlPlaneError } from "./api.js";
+import { loadTrustedServers, serverTrustState } from "./config.js";
 import { ServerProcess, configFingerprint } from "./servers.js";
 import { dryRun, remapPath, restore, scopeRootFor, snapshot } from "./sandbox.js";
 
@@ -15,7 +16,9 @@ function log(message) {
 }
 
 export async function runLoop(config) {
-  const cp = new ControlPlane(config.url, config.token, VERSION);
+  const cp = new ControlPlane(config.url, config.token, VERSION, {
+    insecureLocalDev: config.insecureLocalDev === true,
+  });
   const procs = new Map(); // serverId -> ServerProcess
   let pollIntervalMs = 1500;
   let stopping = false;
@@ -26,9 +29,28 @@ export async function runLoop(config) {
 
     const reports = [];
     const seen = new Set();
+    const trustedServers = loadTrustedServers();
 
     for (const cfg of response.servers ?? []) {
       seen.add(cfg.id);
+      const trust = serverTrustState(cfg, trustedServers);
+      if (!trust.trusted) {
+        const proc = procs.get(cfg.id);
+        if (proc) {
+          await proc.stop();
+          procs.delete(cfg.id);
+        }
+        log(
+          `${cfg.prefix}: refusing untrusted ${trust.reason} server config; run "polyshield trust" after reviewing it locally`,
+        );
+        reports.push({
+          serverId: cfg.id,
+          status: "error",
+          error:
+            "Runner refused to launch an untrusted local server config. Run `polyshield trust` on the runner host after reviewing the command.",
+        });
+        continue;
+      }
       let proc = procs.get(cfg.id);
       if (proc && proc.fingerprint !== configFingerprint(cfg)) {
         log(`${cfg.prefix}: config changed, restarting`);
@@ -105,7 +127,7 @@ export async function runLoop(config) {
   async function takeSnapshot(job, proc, meta) {
     try {
       const root = proc.scopeRoot;
-      const snap = snapshot(root);
+      const snap = snapshot(root, { serverId: job.serverId });
       await cp.reportSnapshot({
         serverId: job.serverId,
         jobId: job.id,
@@ -124,6 +146,15 @@ export async function runLoop(config) {
   async function handleDryRun(job, proc) {
     log(`${proc.config.prefix}: dry-running ${job.rawName}`);
     try {
+      if (
+        !proc.enforceScope ||
+        proc.config.sandbox?.egress?.mode !== "none" ||
+        proc.containerized !== true
+      ) {
+        throw new Error(
+          "dry-run previews require an enforced containerized sandbox with egress disabled",
+        );
+      }
       const makeOverlayServer = (cwd) =>
         new ServerProcess(
           {
@@ -147,7 +178,7 @@ export async function runLoop(config) {
     const root = meta.scopePath || (procs.get(job.serverId)?.scopeRoot);
     log(`restoring snapshot ${meta.ref} → ${root}`);
     try {
-      restore(meta.ref, root || scopeRootFor({ cwd: root }));
+      restore(meta.ref, root || scopeRootFor({ cwd: root }), { serverId: job.serverId });
       await cp.markSnapshotRestored(meta.snapshotId, true);
       await cp.complete(job.id, { content: [{ type: "text", text: "restored" }] }, null, "restore");
       log(`restore complete (${meta.ref})`);
@@ -210,7 +241,9 @@ export async function runLoop(config) {
 
 /** One-shot connectivity check used by `pair` and `status`. */
 export async function checkOnce(config) {
-  const cp = new ControlPlane(config.url, config.token, VERSION);
+  const cp = new ControlPlane(config.url, config.token, VERSION, {
+    insecureLocalDev: config.insecureLocalDev === true,
+  });
   const response = await cp.sync([]);
   return response.servers ?? [];
 }

@@ -15,6 +15,7 @@
     "node": ">=18.17"
   },
   "scripts": {
+    "test": "node sandbox-test.mjs",
     "start": "node bin/polyshield.js start"
   },
   "keywords": [
