@@ -22,6 +22,7 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { diffTrees } from "./diff.js";
 
 const DATA_DIR = join(homedir(), ".polyshield");
@@ -62,7 +63,9 @@ function looksLikePath(key, value) {
   if (typeof value !== "string" || !value) return false;
   if (PATHISH_KEY.test(key)) return true;
   if (value.includes("..")) return true;
+  if (/^file:/i.test(value)) return true;
   if (isAbsolute(value)) return true;
+  if (/^[a-zA-Z]:[/\\]/.test(value)) return true; // Cross-platform absolute
   if (/^[.~][/\\]/.test(value)) return true; // ./  ../  ~/
   return false;
 }
@@ -83,7 +86,14 @@ export function assertPathArgsInScope(args, root, options = {}) {
       );
     }
     if (!looksLikePath(key, value)) return;
-    const resolved = resolve(base, expandHome(value));
+    let parsedValue = value;
+    if (/^file:/i.test(value)) {
+      try {
+        parsedValue = fileURLToPath(value);
+      } catch { /* leave as is */ }
+    }
+
+    const resolved = resolve(base, expandHome(parsedValue));
     if (!inside(base, resolved) || !inside(baseReal, realpathAnchor(resolved))) {
       throw new Error(
         `Polyshield sandbox: argument "${key}" points outside the allowed scope (${base}).`,
@@ -107,7 +117,7 @@ export function assertPathArgsInScope(args, root, options = {}) {
 
 function inside(base, target) {
   const rel = relative(base, target);
-  return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
+  return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel) && !/^[a-zA-Z]:/.test(rel));
 }
 
 function safeRealpath(path) {
@@ -131,17 +141,26 @@ function realpathAnchor(path) {
 /** Map a path that lives under `fromRoot` to the equivalent path under `toRoot`. */
 export function remapPath(value, fromRoot, toRoot) {
   if (typeof value !== "string" || !value) return value;
-  const expanded = expandHome(value);
+  let parsedValue = value;
+  let isFileUrl = false;
+  if (/^file:/i.test(value)) {
+    try {
+      parsedValue = fileURLToPath(value);
+      isFileUrl = true;
+    } catch { /* leave as is */ }
+  }
+
+  const expanded = expandHome(parsedValue);
   const from = resolve(fromRoot);
   // Only remap GENUINE filesystem paths — an absolute path, an explicit
   // ./ ../ ~/ path, or one already under the scope. Bare flags ("-y") and
   // package names ("@scope/pkg") must pass through untouched, or we'd mangle
   // the server's own launch args into nonexistent overlay paths.
-  const pathish = isAbsolute(expanded) || /^[.~][/\\]/.test(expanded) || expanded.startsWith(from);
+  const pathish = isFileUrl || isAbsolute(expanded) || /^[a-zA-Z]:[/\\]/.test(expanded) || /^[.~][/\\]/.test(expanded) || expanded.startsWith(from);
   if (!pathish) return value;
   const resolved = resolve(from, expanded);
-  if (resolved === from) return toRoot;
-  if (resolved.startsWith(from + sep)) return join(toRoot, relative(from, resolved));
+  if (resolved === from) return isFileUrl ? pathToFileURL(toRoot).href : toRoot;
+  if (resolved.startsWith(from + sep)) return isFileUrl ? pathToFileURL(join(toRoot, relative(from, resolved))).href : join(toRoot, relative(from, resolved));
   return value; // outside scope — leave it; the scope check will refuse it
 }
 

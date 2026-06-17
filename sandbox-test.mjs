@@ -78,6 +78,8 @@ check("in-scope relative path allowed", allow("a.txt") === true);
 check("nested in-scope path allowed", allow("sub/c.txt") === true);
 check("parent-escape path refused", allow("../evil.txt") === false);
 check("absolute-outside path refused", allow("C:\\Windows\\System32\\x.txt") === false || allow("/etc/passwd") === false);
+check("cross-platform absolute path refused", allow("C:\\Windows\\System32\\x.txt") === false);
+check("file:// URI escape refused", allow("file:///etc/passwd") === false);
 check("deep traversal refused", allow("sub/../../escape.txt") === false);
 check("nested path arrays refused", (() => {
   try {
