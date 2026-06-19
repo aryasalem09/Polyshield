@@ -64,6 +64,16 @@ function looksLikePath(key, value) {
   if (value.includes("..")) return true;
   if (isAbsolute(value)) return true;
   if (/^[.~][/\\]/.test(value)) return true; // ./  ../  ~/
+
+  // Strings containing slashes might be unclassified paths (e.g. `arg: "link/secret.txt"`).
+  // We limit to < 256 chars and no newlines to avoid scanning massive text payloads,
+  // and exclude URLs. False positives (e.g., dates) are safely ignored by the scope check.
+  if (value.length < 256 && !/[\n\r]/.test(value)) {
+    if ((value.includes("/") || value.includes("\\")) && !/^[a-zA-Z]+:\/\//.test(value)) {
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -107,7 +117,7 @@ export function assertPathArgsInScope(args, root, options = {}) {
 
 function inside(base, target) {
   const rel = relative(base, target);
-  return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
+  return rel === "" || (!!rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
 function safeRealpath(path) {
