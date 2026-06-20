@@ -87,6 +87,14 @@ check("nested path arrays refused", (() => {
     return true;
   }
 })());
+check("excessively deep argument nesting refused", (() => {
+  try {
+    assertPathArgsInScope({ a: { b: { c: { d: { e: { f: { g: { h: { i: { path: "../escape.txt" } } } } } } } } } }, scope);
+    return false;
+  } catch (err) {
+    return err.message.includes("nesting too deep");
+  }
+})());
 check("host shell command args refused", (() => {
   try {
     assertPathArgsInScope({ command: "type C:\\Windows\\win.ini" }, scope);

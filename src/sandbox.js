@@ -95,7 +95,9 @@ export function assertPathArgsInScope(args, root, options = {}) {
   // deeper can't slip past. Array items inherit their container key, so a
   // pathish key like "paths"/"files" is still honored. Depth-bounded.
   const walk = (key, value, depth) => {
-    if (depth > 8) return;
+    // Security: Reject deeply nested arguments instead of silently returning
+    // to prevent hiding path escapes beyond the recursion limit.
+    if (depth > 8) throw new Error("Polyshield sandbox: argument nesting too deep.");
     if (typeof value === "string") check(key, value);
     else if (Array.isArray(value)) for (const item of value) walk(key, item, depth + 1);
     else if (value && typeof value === "object") {
@@ -153,7 +155,9 @@ export function remapPath(value, fromRoot, toRoot) {
  */
 export function remapArgs(args, fromRoot, toRoot) {
   const walk = (key, value, depth) => {
-    if (depth > 8) return value;
+    // Security: Reject deeply nested arguments instead of silently returning
+    // to prevent hiding path escapes beyond the recursion limit.
+    if (depth > 8) throw new Error("Polyshield sandbox: argument nesting too deep.");
     if (typeof value === "string") return looksLikePath(key, value) ? remapPath(value, fromRoot, toRoot) : value;
     if (Array.isArray(value)) return value.map((v) => walk(key, v, depth + 1));
     if (value && typeof value === "object") {
