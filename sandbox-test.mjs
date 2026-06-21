@@ -79,6 +79,14 @@ check("nested in-scope path allowed", allow("sub/c.txt") === true);
 check("parent-escape path refused", allow("../evil.txt") === false);
 check("absolute-outside path refused", allow("C:\\Windows\\System32\\x.txt") === false || allow("/etc/passwd") === false);
 check("deep traversal refused", allow("sub/../../escape.txt") === false);
+check("excessive argument nesting refused", (() => {
+  try {
+    assertPathArgsInScope({ a: { a: { a: { a: { a: { a: { a: { a: { a: { path: "a.txt" } } } } } } } } } }, scope);
+    return false;
+  } catch {
+    return true;
+  }
+})());
 check("nested path arrays refused", (() => {
   try {
     assertPathArgsInScope({ paths: ["a.txt", "../escape.txt"] }, scope);
