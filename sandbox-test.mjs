@@ -7,6 +7,7 @@ import { ControlPlane } from "./src/api.js";
 import { serverTrustFingerprint, serverTrustState } from "./src/config.js";
 import {
   assertPathArgsInScope,
+  remapArgs,
   snapshot,
   restore,
 } from "./src/sandbox.js";
@@ -85,6 +86,26 @@ check("nested path arrays refused", (() => {
     return false;
   } catch {
     return true;
+  }
+})());
+check("deeply nested argument traversal refused", (() => {
+  try {
+    let nested = "../../../etc/passwd";
+    for (let i = 0; i < 9; i++) nested = { path: nested };
+    assertPathArgsInScope(nested, scope);
+    return false;
+  } catch (err) {
+    return err.message.includes("too deep");
+  }
+})());
+check("remapArgs refuses deeply nested arguments", (() => {
+  try {
+    let nested = "/foo/bar";
+    for (let i = 0; i < 9; i++) nested = { path: nested };
+    remapArgs(nested, "/foo", "/overlay");
+    return false;
+  } catch (err) {
+    return err.message.includes("too deep");
   }
 })());
 check("host shell command args refused", (() => {
