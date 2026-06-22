@@ -1,0 +1,4 @@
+## 2024-06-22 - Path Traversal Bypass via Deeply Nested Arguments
+**Vulnerability:** Sandbox path scope enforcement (`assertPathArgsInScope`) and dry-run remapping (`remapArgs`) silently returned/ignored values when the argument tree traversal depth exceeded 8 levels. This allowed deeply nested argument objects to completely bypass path validation and potentially escape the sandbox directory.
+**Learning:** Security checks that traverse arbitrary input tree structures (like JSON arguments) must fail closed when limits (such as recursion depth) are hit. Returning silently effectively disabled the security check for deep structures, creating a bypass.
+**Prevention:** When traversing trees for security checks, explicitly throw an error if constraints like `depth > MAX_DEPTH` are exceeded, rather than returning early and assuming the data is safe.
