@@ -79,6 +79,18 @@ check("nested in-scope path allowed", allow("sub/c.txt") === true);
 check("parent-escape path refused", allow("../evil.txt") === false);
 check("absolute-outside path refused", allow("C:\\Windows\\System32\\x.txt") === false || allow("/etc/passwd") === false);
 check("deep traversal refused", allow("sub/../../escape.txt") === false);
+check("argument tree too deep refused", (() => {
+  try {
+    let deep = { path: "../escape.txt" };
+    for (let i = 0; i < 10; i++) {
+      deep = { nested: deep };
+    }
+    assertPathArgsInScope(deep, scope);
+    return false;
+  } catch (e) {
+    return e.message.includes("argument tree too deep");
+  }
+})());
 check("nested path arrays refused", (() => {
   try {
     assertPathArgsInScope({ paths: ["a.txt", "../escape.txt"] }, scope);
