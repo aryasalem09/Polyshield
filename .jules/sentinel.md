@@ -1,0 +1,4 @@
+## 2024-05-16 - [Critical] Sandbox evasion via silent recursion depth failures
+**Vulnerability:** The sandbox scope enforcer (`assertPathArgsInScope`) and dry-run remapper (`remapArgs`) silently stopped traversing object structures when depth exceeded 8 (`if (depth > 8) return;`). This allowed malicious path-like arguments to bypass scope checks and escape the sandbox if they were nested >8 levels deep in the JSON tool call payload.
+**Learning:** Security checks that traverse arbitrary tree structures must fail closed. When constraint bounds (like max recursion depth) are hit, returning silently assumes the unvisited nodes are safe. In an allowlisting model (like path scoping), unvisited nodes must be treated as untrusted and explicit exceptions must be thrown.
+**Prevention:** Always throw an explicit error (`throw new Error(...)`) when a security-critical tree traversal hits its recursion limit, rather than simply returning or continuing.
