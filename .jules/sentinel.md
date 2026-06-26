@@ -1,0 +1,4 @@
+## 2026-06-26 - Arbitrary Tree Traversal Bypass in Path Scoping
+**Vulnerability:** The `assertPathArgsInScope` and `remapArgs` functions traversed arguments up to a depth of 8, and returned silently if the tree was deeper, which allowed malicious paths hidden deeper than 8 levels to escape the path scoping logic.
+**Learning:** Security checks that traverse arbitrary tree structures must fail closed (e.g., explicitly throw errors when constraints like recursion depth limits are exceeded) rather than returning silently.
+**Prevention:** Always use a "fail closed" approach for constraints during security validation loops, especially for depth limits on recursive tree walks.
