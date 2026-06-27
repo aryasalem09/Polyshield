@@ -64,6 +64,14 @@ check("restore refuses a different server id", (() => {
     return true;
   }
 })());
+check("deep nested object fails closed", (() => {
+  try {
+    assertPathArgsInScope({ a: { b: { c: { d: { e: { f: { g: { h: { i: { filepath: "../escape.txt" } } } } } } } } } }, scope);
+    return false;
+  } catch (err) {
+    return err.message.includes("argument tree too deep");
+  }
+})());
 
 // ---- path-scope enforcement ----
 const allow = (p) => {
