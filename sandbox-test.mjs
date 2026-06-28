@@ -95,6 +95,17 @@ check("host shell command args refused", (() => {
     return true;
   }
 })());
+check("deeply nested path escape refused (depth limit)", (() => {
+  try {
+    const deepObj = {
+      level1: { level2: { level3: { level4: { level5: { level6: { level7: { level8: { level9: { path: "../escape.txt" } } } } } } } } }
+    };
+    assertPathArgsInScope(deepObj, scope);
+    return false;
+  } catch (err) {
+    return err.message.includes("argument tree too deep");
+  }
+})());
 check("symlink directory escape refused when supported", (() => {
   const outside = mkdtempSync(join(tmpdir(), "ps-outside-"));
   writeFileSync(join(outside, "secret.txt"), "secret\n");
